@@ -1,0 +1,8 @@
+build/
+build-*/
+data/raw/
+results/*.csv
+results/**/*.csv
+*.trace
+.DS_Store
+results/*.txt
