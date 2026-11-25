@@ -1,4 +1,7 @@
+// End-to-end tests run the whole program on the real HCRL Car-Hacking recordings.
+// The dataset is not part of the repository: download it into data/raw (see the Dataset section of the README).
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -7,29 +10,28 @@
 #include "TestRegistry.hpp"
 #include "TempPath.hpp"
 #include "canguard/SequentialPipeline.hpp"
-#include "canguard/SyntheticGenerator.hpp"
 
-using canguard::AttackType;
+#ifndef CANGUARD_DATA_DIR
+#error "CMake must define CANGUARD_DATA_DIR (the data/raw folder)"
+#endif
+
 using canguard::Options;
 using canguard::RunResult;
 using canguard::SequentialPipeline;
-using canguard::SyntheticConfig;
-using canguard::SyntheticGenerator;
 
 namespace {
 
-// Writes a generated file into the temp folder and returns its path.
-std::filesystem::path generateFile(const std::string& name, AttackType attack, double seconds, std::uint64_t seed,
-                                   std::size_t* frameCount = nullptr) {
-    SyntheticConfig config;
-    config.attack = attack;
-    config.durationSeconds = seconds;
-    config.seed = seed;
-    const auto frames = SyntheticGenerator(config).generate();
-    if (frameCount != nullptr) *frameCount = frames.size();
+// Number of messages and of attack messages in the published DoS_dataset.csv.
+constexpr std::size_t kDosFrames = 3665771;
+constexpr std::size_t kDosAttackFrames = 587521;
 
-    const auto path = canguard::testing::uniqueTempPath("e2e_" + name + ".csv");
-    SyntheticGenerator::writeCsv(frames, path.string());
+// Path of a dataset file. A missing file fails the test with a message that says what to do.
+std::filesystem::path datasetFile(const std::string& name) {
+    const std::filesystem::path path = std::filesystem::path(CANGUARD_DATA_DIR) / name;
+    if (!std::filesystem::exists(path)) {
+        throw std::runtime_error("dataset file not found: " + path.string() +
+                                 ". Download the HCRL Car-Hacking dataset into data/raw (see the Dataset section of the README).");
+    }
     return path;
 }
 
@@ -40,51 +42,49 @@ RunResult runTrainingFromInput(const std::filesystem::path& input, double traini
     return SequentialPipeline().run(options);
 }
 
-}  // namespace
-
-TEST_CASE(endToEndDosFileTrainedFromItsOwnInputReachesRecallOfAtLeast90Percent) {
-    const auto input = generateFile("dos", AttackType::Dos, 60.0, 7);
-    const RunResult result = runTrainingFromInput(input, 5.0);
-    std::filesystem::remove(input);
-
-    CHECK(result.metrics.truePositives + result.metrics.falseNegatives == 50000);
-    CHECK(result.metrics.recall >= 0.9);
-    CHECK(result.metrics.precision >= 0.9);
+// Copies the first `lines` lines of a file into a new temp file and returns its path.
+std::filesystem::path firstLinesCopy(const std::filesystem::path& source, std::size_t lines, const std::string& name) {
+    const auto path = canguard::testing::uniqueTempPath(name);
+    std::ifstream in(source, std::ios::binary);
+    std::ofstream out(path, std::ios::binary);
+    std::string line;
+    for (std::size_t i = 0; i < lines && std::getline(in, line); ++i) out << line << '\n';
+    return path;
 }
 
-TEST_CASE(endToEndFuzzyAndSpoofFilesAreDetectedToo) {
-    for (const AttackType attack : {AttackType::Fuzzy, AttackType::Spoof}) {
-        const auto input = generateFile("other_attacks", attack, 60.0, 11);
-        const RunResult result = runTrainingFromInput(input, 5.0);
-        std::filesystem::remove(input);
+}  // namespace
 
-        CHECK(result.metrics.recall >= 0.9);
-        CHECK(result.metrics.falsePositiveRate <= 0.05);
+TEST_CASE(endToEndDosFileTrainedFromItsOwnInputIsDetectedAlmostPerfectly) {
+    const RunResult result = runTrainingFromInput(datasetFile("DoS_dataset.csv"), 60.0);
+
+    CHECK(result.metrics.truePositives + result.metrics.falseNegatives == kDosAttackFrames);
+    CHECK(result.metrics.recall >= 0.99);
+    CHECK(result.metrics.precision >= 0.99);
+}
+
+TEST_CASE(endToEndFuzzyAndSpoofingFilesAreDetectedToo) {
+    for (const char* name : {"Fuzzy_dataset.csv", "gear_dataset.csv", "RPM_dataset.csv"}) {
+        const RunResult result = runTrainingFromInput(datasetFile(name), 60.0);
+
+        CHECK(result.metrics.recall >= 0.95);
+        CHECK(result.metrics.precision >= 0.85);
     }
 }
 
-TEST_CASE(endToEndTrainsOnASeparateAttackFreeFile) {
-    const auto normal = generateFile("normal", AttackType::None, 30.0, 3);
-    const auto input = generateFile("with_attack", AttackType::Dos, 60.0, 4);
-
+TEST_CASE(endToEndTrainsOnTheSeparateAttackFreeRecording) {
     Options options;
-    options.trainPath = normal.string();
-    options.inputPath = input.string();
+    options.trainPath = datasetFile("normal_run_data.txt").string();
+    options.inputPath = datasetFile("DoS_dataset.csv").string();
     const RunResult result = SequentialPipeline().run(options);
-    std::filesystem::remove(normal);
-    std::filesystem::remove(input);
 
-    CHECK(result.metrics.recall >= 0.9);
+    CHECK(result.metrics.recall >= 0.99);
     CHECK(result.metrics.precision >= 0.9);
 }
 
 TEST_CASE(endToEndReportsCountsTimingsAndAlerts) {
-    std::size_t expectedFrames = 0;
-    const auto input = generateFile("counts", AttackType::Dos, 40.0, 5, &expectedFrames);
-    const RunResult result = runTrainingFromInput(input, 5.0);
-    std::filesystem::remove(input);
+    const RunResult result = runTrainingFromInput(datasetFile("DoS_dataset.csv"), 60.0);
 
-    CHECK(result.frameCount == expectedFrames);
+    CHECK(result.frameCount == kDosFrames);
     CHECK(result.skippedLines == 0);
     CHECK(result.alerts.size() == result.metrics.truePositives + result.metrics.falsePositives);
     CHECK(result.ruleNames.size() == 4);
@@ -99,7 +99,8 @@ TEST_CASE(endToEndReportsCountsTimingsAndAlerts) {
 }
 
 TEST_CASE(endToEndCountsMalformedInputLines) {
-    const auto input = generateFile("malformed", AttackType::Dos, 20.0, 6);
+    // A slice of the real file with two broken lines added at the end.
+    const auto input = firstLinesCopy(datasetFile("DoS_dataset.csv"), 100000, "e2e_malformed.csv");
     {
         std::ofstream append(input, std::ios::app | std::ios::binary);
         append << "this is not a CAN message\n1478198999.0,0316,8,01\n";
@@ -107,6 +108,7 @@ TEST_CASE(endToEndCountsMalformedInputLines) {
     const RunResult result = runTrainingFromInput(input, 5.0);
     std::filesystem::remove(input);
 
+    CHECK(result.frameCount == 100000);
     CHECK(result.skippedLines == 2);
 }
 

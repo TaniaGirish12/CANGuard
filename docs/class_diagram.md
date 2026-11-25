@@ -38,33 +38,9 @@ classDiagram
         +parseLine(line, format)$ optional~CanFrame~
         +parseText(text, format, firstLineNumber)$ ReadResult
     }
-    class AttackType {
-        <<enumeration>>
-        None
-        Dos
-        Fuzzy
-        Spoof
-    }
-    class SyntheticConfig {
-        <<struct>>
-        +double durationSeconds
-        +AttackType attack
-        +uint64 seed
-        +double firstBurstSeconds
-        +double burstLengthSeconds
-        +double burstGapSeconds
-    }
-    class SyntheticGenerator {
-        +generate() vector~CanFrame~
-        +writeCsv(frames, path)$ void
-    }
-
     CanLogReader ..> LogFormat : detects
     CanLogReader ..> ReadResult : returns
     ReadResult o-- CanFrame
-    SyntheticGenerator --> SyntheticConfig
-    SyntheticConfig --> AttackType
-    SyntheticGenerator ..> CanFrame : generates
 
     %% ---- learning ----
     class IdProfile {

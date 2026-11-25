@@ -12,7 +12,6 @@ is implemented. Phase 2 (parallel pipelines) has interface headers only.
 - [Dataset](#dataset)
 - [Build](#build)
 - [Run](#run)
-- [Synthetic data with `cangen`](#synthetic-data-with-cangen)
 - [Test](#test)
 - [Run on every attack file](#run-on-every-attack-file)
 - [Profile](#profile)
@@ -75,7 +74,12 @@ use and how to cite it.
    cp "path/to/Car-Hacking Dataset"/normal_run_data/normal_run_data.txt data/raw/
    ```
 
-File names may vary; every path is passed on the command line. The two formats:
+**The dataset is required.** The repository does not contain it (about 900 MB), so every user must download it
+and place the five files in `data/raw/` before running the end-to-end tests or the examples below. The end-to-end
+tests look for exactly these names: `DoS_dataset.csv`, `Fuzzy_dataset.csv`, `gear_dataset.csv`, `RPM_dataset.csv`
+and `normal_run_data.txt`. A missing file makes those tests fail with a message that names it.
+
+File names may vary when you run the program yourself; every path is passed on the command line. The two formats:
 
 - **Attack files** are CSV with no header: `Timestamp,CAN_ID,DLC,DATA[0],...,DATA[DLC-1],Flag`. The timestamp is
   in seconds, the ID and data bytes are hex, and the flag is `T` (injected) or `R` (normal). With a DLC below 8
@@ -103,7 +107,7 @@ cmake --build build -j
 Add `-DCANGUARD_TSAN=ON` to build every target with ThreadSanitizer (use a separate folder, for example
 `-B build-tsan`).
 
-Targets: `canguard` (the detector), `cangen` (synthetic data generator) and `canguard_tests`. All three link the
+Targets: `canguard` (the detector) and `canguard_tests`. Both link the
 static library `canguard_core`.
 
 ## Run
@@ -156,20 +160,6 @@ Each run writes three files into the output folder:
 
 Exit codes: 0 success, 1 runtime error (for example an unreadable file), 2 bad command line.
 
-## Synthetic data with `cangen`
-
-`cangen` writes attack-format CSV with several periodic IDs and stable payloads, plus attack bursts flagged `T`.
-The same seed always gives the same file.
-
-```bash
-build/cangen --out data/synthetic/synthetic_dos.csv --seconds 60 --attack dos --seed 42
-build/canguard --train-from-input 5 --input data/synthetic/synthetic_dos.csv
-```
-
-`--attack` is `dos`, `fuzzy`, `spoof` or `none`. Bursts are 3 s long, every 10 s, and the first one starts at
-10 s so the start of the file is clean training material. A run shorter than 10 s therefore contains no attack.
-Four 60-second samples (seed 42) are in `data/synthetic/`.
-
 ## Test
 
 ```bash
@@ -178,8 +168,12 @@ ctest --test-dir build --output-on-failure
 
 The tests use a small self-made runner (no framework): parser, rules, detector, profile builder, evaluator,
 stage timer, result writer, CLI, console report, `BoundedBuffer` (blocking behaviour, and 4 producers and
-4 consumers moving 100,000 items exactly once), the synthetic generator and end-to-end runs (a synthetic DoS file
-trained with `--train-from-input` must reach a recall of at least 0.9).
+4 consumers moving 100,000 items exactly once) and end-to-end runs.
+
+**The end-to-end tests need the real dataset in `data/raw/`** (see [Dataset](#dataset)). They run the whole
+program on the HCRL recordings and check, for example, that the DoS file has 3,665,771 messages of which 587,521
+are attacks, and that its recall and precision are at least 0.99. Without the dataset those five tests fail
+with a message that says which file is missing. The full suite takes about 5 seconds.
 
 The threaded tests must also pass under ThreadSanitizer:
 
@@ -205,7 +199,7 @@ scripts/run_all.sh --min-score 2 --repeat 3
 ```
 
 `CANGUARD_BIN`, `CANGUARD_INPUT_DIR` and `CANGUARD_RESULTS_DIR` change the binary, the input folder and the
-output folder (for example `CANGUARD_INPUT_DIR=data/synthetic scripts/run_all.sh`).
+output folder (for example `CANGUARD_RESULTS_DIR=results/trial scripts/run_all.sh`).
 
 ## Profile
 
@@ -385,12 +379,11 @@ about 80% of that.
 ```text
 CMakeLists.txt
 include/canguard/   one header per class
-src/                sources, main.cpp (canguard), cangen_main.cpp (cangen)
+src/                sources, main.cpp (canguard)
 tests/              test runner and tests
 scripts/            run_all.sh, profile_mac.sh, profile_sample.sh
 docs/               class_diagram.md (Mermaid class diagrams)
 data/raw/           real dataset (not committed)
-data/synthetic/     small generated files
 results/            output CSVs and traces (not committed)
 ```
 

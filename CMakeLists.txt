@@ -25,7 +25,7 @@ if(CANGUARD_TSAN)
 endif()
 
 file(GLOB CORE_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
-list(FILTER CORE_SOURCES EXCLUDE REGEX "/(main|cangen_main)\\.cpp$")
+list(FILTER CORE_SOURCES EXCLUDE REGEX "/main\\.cpp$")
 
 add_library(canguard_core STATIC ${CORE_SOURCES})
 target_include_directories(canguard_core PUBLIC ${CMAKE_SOURCE_DIR}/include)
@@ -34,14 +34,14 @@ target_link_libraries(canguard_core PUBLIC Threads::Threads canguard_build_flags
 add_executable(canguard src/main.cpp)
 target_link_libraries(canguard PRIVATE canguard_core)
 
-add_executable(cangen src/cangen_main.cpp)
-target_link_libraries(cangen PRIVATE canguard_core)
-
 enable_testing()
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
 
 add_executable(canguard_tests ${TEST_SOURCES})
 target_link_libraries(canguard_tests PRIVATE canguard_core)
+# The end-to-end tests read the real dataset from data/raw (see the README).
+target_compile_definitions(canguard_tests PRIVATE CANGUARD_DATA_DIR="${CMAKE_SOURCE_DIR}/data/raw")
 add_test(NAME canguard_tests COMMAND canguard_tests)
-# A broken BoundedBuffer would hang the threaded tests, so never wait forever.
-set_tests_properties(canguard_tests PROPERTIES TIMEOUT 120)
+# A broken BoundedBuffer would hang the threaded tests, so never wait forever. The end-to-end tests read about
+# 700 MB of data, which needs more time under ThreadSanitizer.
+set_tests_properties(canguard_tests PROPERTIES TIMEOUT 600)
